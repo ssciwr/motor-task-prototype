@@ -14,12 +14,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci-pip:
-    runs-on: windows-latest
+  ci-conda:
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
           python-version: 3.8
       - run: pip install -e .[tests] --verbose
-      - run: python -m pytest -v
+      - run: python -m pytest --cov=motor_task_prototype --cov-report=xml -v
+  ci-pip:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+      - run: pip install -e .[tests] --verbose
+      - run: python -m pytest --cov=motor_task_prototype --cov-report=xml -v

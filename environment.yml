@@ -1,0 +1,7 @@
+name: motor_task_prototype
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.8
+  - psychopy
