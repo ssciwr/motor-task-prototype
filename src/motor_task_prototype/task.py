@@ -10,6 +10,7 @@ from psychopy.colors import Color, colors
 colors.pop("none")
 from psychopy.sound import Sound
 from psychopy.clock import Clock
+from psychopy.data import TrialHandlerExt, importConditions
 from psychopy import core
 from psychopy.event import Mouse, xydist
 from psychopy.hardware.keyboard import Keyboard
@@ -81,41 +82,21 @@ def draw_and_flip(win: Window, drawables: List[BaseVisualStim], kb: Keyboard) ->
     win.flip()
 
 
-class TargetOrder(Enum):
-    CLOCKWISE = "Clockwise"
-    ANTICLOCKWISE = "Anti-clockwise"
-    RANDOM = "Random"
-
-
-@dataclass
-class MotorTaskSettings:
-    n_points: int = 8
-    order_of_targets: TargetOrder = TargetOrder.CLOCKWISE
-    time_per_point: float = 5
-    time_between_points: float = 2
-    outer_radius: float = 0.45
-    point_radius: float = 0.04
-    center_point_radius: float = 0.02
-    play_sound: bool = True
-    show_cursor: bool = True
-    show_cursor_line: bool = True
-    rotate_cursor_radians: float = 0
-
-
 MotorTaskSettingsDict = TypedDict(
     "MotorTaskSettingsDict",
     {
-        "Number of targets": int,
-        "Order of targets": List[str],
-        "Target Duration (secs)": float,
-        "Interval between targets (secs)": float,
-        "Distance of targets (screen height)": float,
-        "Size of targets (screen height)": float,
-        "Size of center point (screen height)": float,
-        "Audible tone on target display": bool,
-        "Display cursor": bool,
-        "Display cursor path": bool,
-        "Rotate cursor (degrees)": float,
+        "num_targets": int,
+        "target_order": str,
+        "target_indices": np.ndarray,
+        "target_duration": float,
+        "inter_target_duration": float,
+        "target_distance": float,
+        "target_size": float,
+        "central_target_size": float,
+        "play_sound": bool,
+        "show_cursor": bool,
+        "show_cursor_path": bool,
+        "cursor_rotation": float,
     },
 )
 
@@ -129,124 +110,113 @@ class MotorTaskTargetResult:
 
 
 def get_settings_from_user(
-    settings: MotorTaskSettings = MotorTaskSettings(),
-) -> MotorTaskSettings:
-    order_of_targets = [settings.order_of_targets.value]
-    for target_order in TargetOrder:
-        if target_order != settings.order_of_targets:
-            order_of_targets.append(target_order.value)
-    dialog_dict: MotorTaskSettingsDict = {
-        "Number of targets": settings.n_points,
-        "Order of targets": order_of_targets,
-        "Target Duration (secs)": settings.time_per_point,
-        "Interval between targets (secs)": settings.time_between_points,
-        "Distance of targets (screen height)": settings.outer_radius,
-        "Size of targets (screen height)": settings.point_radius,
-        "Size of center point (screen height)": settings.center_point_radius,
-        "Audible tone on target display": settings.play_sound,
-        "Display cursor": settings.show_cursor,
-        "Display cursor path": settings.show_cursor_line,
-        "Rotate cursor (degrees)": settings.rotate_cursor_radians,
-    }
-    dialog = DlgFromDict(dialog_dict, title="Motor task settings", sortKeys=False)
-    if dialog.OK:
-        settings.n_points = dialog_dict["Number of targets"]
-        settings.order_of_targets = TargetOrder(dialog_dict["Order of targets"])
-        settings.time_per_point = dialog_dict["Target Duration (secs)"]
-        settings.time_between_points = dialog_dict["Interval between targets (secs)"]
-        settings.outer_radius = dialog_dict["Distance of targets (screen height)"]
-        settings.point_radius = dialog_dict["Size of targets (screen height)"]
-        settings.center_point_radius = dialog_dict[
-            "Size of center point (screen height)"
-        ]
-        settings.play_sound = dialog_dict["Audible tone on target display"]
-        settings.show_cursor = dialog_dict["Display cursor"]
-        settings.show_cursor_line = dialog_dict["Display cursor path"]
-        settings.rotate_cursor_radians = dialog_dict["Rotate cursor (degrees)"] * (
-            2.0 * np.pi / 360.0
-        )
+    settings: MotorTaskSettingsDict = None,
+) -> MotorTaskSettingsDict:
+    if settings is None:
+        settings = {
+            "num_targets": 8,
+            "target_order": "clockwise",
+            "target_indices": [],
+            "target_duration": 5,
+            "inter_target_duration": 1,
+            "target_distance": 0.4,
+            "target_size": 0.04,
+            "central_target_size": 0.02,
+            "play_sound": True,
+            "show_cursor": True,
+            "show_cursor_path": True,
+            "cursor_rotation": 0.0,
+        }
+    order_of_targets = [settings["target_order"]]
+    for target_order in ["clockwise", "anti-clockwise", "random"]:
+        if target_order != order_of_targets[0]:
+            order_of_targets.append(target_order)
+    dialog = DlgFromDict(settings, title="Motor task settings", sortKeys=False)
+    if not dialog.OK:
+        core.quit()
+    settings["cursor_rotation"] = settings["cursor_rotation"] * (2.0 * np.pi / 360.0)
     return settings
 
 
 class MotorTask:
-    settings: MotorTaskSettings
-    target_indices: np.ndarray
+    trials: TrialHandlerExt
 
-    def __init__(self, settings: MotorTaskSettings = MotorTaskSettings()):
-        self.settings = settings
-        self.target_indices = np.array(range(self.settings.n_points))
-        if self.settings.order_of_targets == TargetOrder.ANTICLOCKWISE:
-            self.target_indices = np.flip(self.target_indices)
-        elif self.settings.order_of_targets == TargetOrder.RANDOM:
+    def __init__(self, settings: MotorTaskSettingsDict):
+        settings["target_indices"] = np.array(range(settings["num_targets"]))
+        if settings["target_order"] == "anti-clockwise":
+            settings["target_indices"] = np.flip(settings["target_indices"])
+        elif settings["target_order"] == "anti-clockwise":
             rng = np.random.default_rng()
-            rng.shuffle(self.target_indices)
+            rng.shuffle(settings["target_indices"])
+        self.trials = TrialHandlerExt([settings], 1, originPath=-1)
 
-    def run(self, win: Window) -> List[MotorTaskTargetResult]:
-        results = []
+    def run(self, win: Window) -> TrialHandlerExt:
+        trial = self.trials.getCurrentTrial()
+        print(trial)
         mouse = Mouse(visible=False)
         clock = Clock()
         kb = Keyboard()
         targets: ElementArrayStim = make_targets(
             win,
-            self.settings.n_points,
-            self.settings.outer_radius,
-            self.settings.point_radius,
-            self.settings.center_point_radius,
+            trial["num_targets"],
+            trial["target_distance"],
+            trial["target_size"],
+            trial["central_target_size"],
         )
         drawables: List[Union[BaseVisualStim, ElementArrayStim]] = [targets]
         cursor = make_cursor(win)
-        if self.settings.show_cursor:
+        if trial["show_cursor"]:
             drawables.append(cursor)
-        rotated_point = mtpgeom.RotatedPoint(self.settings.rotate_cursor_radians)
+        rotated_point = mtpgeom.RotatedPoint(trial["cursor_rotation"])
         cursor_path = ShapeStim(
             win, vertices=[(0, 0)], lineColor="white", closeShape=False
         )
-        if self.settings.show_cursor_line:
+        if trial["show_cursor_path"]:
             drawables.append(cursor_path)
-        for target_index in self.target_indices:
-            result = MotorTaskTargetResult(
-                target_index, targets.xys[target_index], [], []
-            )
+        for target_index in trial["target_indices"]:
+            self.trials.addData("target_index", targets.xys[target_index])
+            self.trials.addData("target_pos", targets.xys[target_index])
             select_target(targets, None)
             cursor_path.vertices = [(0, 0)]
             cursor.setPos((0.0, 0.0))
             clock.reset()
-            while clock.getTime() < self.settings.time_between_points:
+            while clock.getTime() < trial["inter_target_duration"]:
                 draw_and_flip(win, drawables, kb)
             select_target(targets, target_index)
-            if self.settings.play_sound:
+            if trial["play_sound"]:
                 Sound("A", secs=0.3, blockSize=512).play()
             mouse_pos = (0.0, 0.0)
             dist = xydist(mouse_pos, targets.xys[target_index])
-            result.mouse_times.append(0)
-            result.mouse_positions.append(mouse_pos)
+            mouse_times = [0]
+            mouse_positions = [mouse_pos]
             mouse.setPos(mouse_pos)
             draw_and_flip(win, drawables, kb)
             clock.reset()
             mouse.setPos(mouse_pos)
             win.recordFrameIntervals = True
             while (
-                dist > self.settings.point_radius
-                and clock.getTime() < self.settings.time_per_point
+                dist > trial["target_size"]
+                and clock.getTime() < trial["target_duration"]
             ):
                 mouse_pos = rotated_point(mouse.getPos())
-                if self.settings.show_cursor:
+                if trial["show_cursor"]:
                     cursor.setPos(mouse_pos)
-                result.mouse_times.append(clock.getTime())
-                result.mouse_positions.append(mouse_pos)
-                if self.settings.show_cursor_line:
-                    cursor_path.vertices = result.mouse_positions
+                mouse_times.append(clock.getTime())
+                mouse_positions.append(mouse_pos)
+                if trial["show_cursor_path"]:
+                    cursor_path.vertices = mouse_positions
                 dist = xydist(mouse_pos, targets.xys[target_index])
                 draw_and_flip(win, drawables, kb)
             win.recordFrameIntervals = False
-            if win.nDroppedFrames > 0:
-                print(f"Warning: dropped {win.nDroppedFrames} frames")
-            results.append(result)
+            self.trials.addData("timestamps", mouse_positions)
+            self.trials.addData("mouse_positions", mouse_positions)
+        if win.nDroppedFrames > 0:
+            print(f"Warning: dropped {win.nDroppedFrames} frames")
         win.flip()
-        return results
+        return self.trials
 
     def display_results(
-        self, win: Window, results: List[MotorTaskTargetResult]
+        self, win: Window, settings: MotorTaskSettingsDict, results: TrialHandlerExt
     ) -> None:
         clock = Clock()
         kb = Keyboard()
@@ -255,7 +225,7 @@ class MotorTask:
             drawables.append(
                 Circle(
                     win,
-                    radius=self.settings.point_radius,
+                    radius=settings["target_size"],
                     pos=result.target_position,
                     fillColor=color,
                 )
